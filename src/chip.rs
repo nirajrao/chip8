@@ -62,7 +62,7 @@ impl Chip8 {
                 let address = opcode & 0x0FFF;
                 self.stack[self.sp] = self.pc as u32;
                 self.sp += 1;
-                self.pc = opcode as usize;
+                self.pc = address as usize;
             }
             // 3XNN - Skip next instruction if Vx == NN
             0x3000 => {
@@ -197,6 +197,7 @@ impl Chip8 {
                             self.registers[register_x as usize] << 1;
                         self.pc += 2;
                     }
+                    _ => println!("No Match"),
                 }
             }
             // Skip the next instruction if Vx does not equal Vy.
@@ -241,6 +242,7 @@ impl Chip8 {
                     }
                     self.pc += 2;
                 }
+                _ => println!("No Match"),
             },
             0xF000 => match opcode & 0x00FF {
                 0x0007 => {
@@ -273,6 +275,29 @@ impl Chip8 {
                     self.I += self.registers[register_x as usize];
                     self.pc += 2;
                 }
+                0x0055 => {
+                    let mut offset = 0;
+                    let x = opcode & 0x0F00;
+                    for idx in 0..=x {
+                        let value = self.registers[idx as usize];
+                        self.memory_buffer[(self.I + offset) as usize] = (value & 0xFF00) as u8;
+                        self.memory_buffer[(self.I + offset + 1) as usize] = (value & 0x00FF) as u8;
+                        offset += 2;
+                    }
+                    self.pc += 2;
+                }
+                0x0065 => {
+                    let x = opcode & 0x0F00;
+                    let mut offset = 0;
+                    for idx in 0..=x {
+                        self.registers[idx as usize] =
+                            (self.memory_buffer[(self.I + offset) as usize] as u16) << 8
+                                | (self.memory_buffer[(self.I + offset + 1) as usize]) as u16;
+                        offset += 2;
+                    }
+                    self.pc += 2;
+                }
+                _ => println!("No Match"),
             },
 
             _ => println!("No Match"),
