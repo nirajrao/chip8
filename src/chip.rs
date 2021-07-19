@@ -7,7 +7,7 @@ const NUM_KEYS: usize = 16;
 
 pub struct Chip8 {
     memory_buffer: [u8; MEMORY_SIZE],
-    stack: [u32; STACK_LEVELS],
+    stack: [u16; STACK_LEVELS],
     pc: usize, // Program Counter
     sp: usize, // Stack Pointer
     I: u16,    // Index Register
@@ -60,7 +60,7 @@ impl Chip8 {
             // 2NNN - Calls subroutine at NNN.
             0x2000 => {
                 let address = opcode & 0x0FFF;
-                self.stack[self.sp] = self.pc as u32;
+                self.stack[self.sp] = self.pc as u16;
                 self.sp += 1;
                 self.pc = address as usize;
             }
