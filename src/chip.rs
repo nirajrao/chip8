@@ -4,7 +4,6 @@ const MEMORY_SIZE: usize = 4096;
 const STACK_LEVELS: usize = 16;
 const NUM_REGISTERS: usize = 16;
 const NUM_KEYS: usize = 16;
-const SCREEN_SIZE: u32 = 64 * 32;
 
 pub struct Chip8 {
     memory_buffer: [u8; MEMORY_SIZE],
@@ -16,6 +15,7 @@ pub struct Chip8 {
     keys: [u8; NUM_KEYS],
     delay_timer: u16,
     sound_timer: u16,
+    graphics: [[u8; 64]; 32],
 }
 
 impl Chip8 {
@@ -26,6 +26,7 @@ impl Chip8 {
             stack: [0; STACK_LEVELS],
             keys: [0; NUM_KEYS],
             registers: [0; NUM_REGISTERS],
+            graphics: [[0; 64]; 32],
             pc: 0x200,
             sp: 0,
             I: 0,
