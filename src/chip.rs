@@ -3,6 +3,7 @@ use std::fs;
 const MEMORY_SIZE: usize = 4096;
 const STACK_LEVELS: usize = 16;
 const NUM_REGISTERS: usize = 16;
+const NUM_KEYS: usize = 16;
 const SCREEN_SIZE: u32 = 64 * 32;
 
 pub struct Chip8 {
@@ -10,7 +11,11 @@ pub struct Chip8 {
     stack: [u32; STACK_LEVELS],
     pc: usize, // Program Counter
     sp: usize, // Stack Pointer
+    I: u16,    // Index Register
     registers: [u16; NUM_REGISTERS],
+    keys: [u8; NUM_KEYS],
+    delay_timer: u16,
+    sound_timer: u16,
 }
 
 impl Chip8 {
@@ -19,9 +24,13 @@ impl Chip8 {
         Self {
             memory_buffer: memory_buffer,
             stack: [0; STACK_LEVELS],
+            keys: [0; NUM_KEYS],
             registers: [0; NUM_REGISTERS],
             pc: 0x200,
             sp: 0,
+            I: 0,
+            delay_timer: 0,
+            sound_timer: 0,
         }
     }
 
@@ -143,8 +152,127 @@ impl Chip8 {
                         self.registers[register_x as usize] = sum;
                         self.pc += 2;
                     }
+                    // Vy is subtracted from Vx. Vf is set to 0 when there's a borrow and 1 when
+                    // there is not.
+                    0x005 => {
+                        let register_x = opcode & 0x0F00;
+                        let register_y = opcode & 0x00F0;
+
+                        let difference = self.registers[register_x as usize]
+                            - self.registers[register_y as usize];
+
+                        // TODO: VF is set to 0 when there's a borrow, and 1 when there is not.
+
+                        self.registers[register_x as usize] = difference;
+                        self.pc += 2;
+                    }
+                    // Stores the least significant bit of Vx in Vf and shits Vx to the right by 1.
+                    0x006 => {
+                        let register_x = opcode & 0x0F00;
+                        self.registers[15] = self.registers[register_x as usize] & 0b00000001;
+                        self.registers[register_x as usize] =
+                            self.registers[register_x as usize] >> 1;
+                        self.pc += 2;
+                    }
+                    // Sets Vx to Vy minus Vx. Vf is set to 0 when there's a borrow and 1 when
+                    // there is not.
+                    0x007 => {
+                        let register_x = opcode & 0x0F00;
+                        let register_y = opcode & 0x00F0;
+
+                        let difference = self.registers[register_y as usize]
+                            - self.registers[register_x as usize];
+
+                        // TODO: VF is set to 0 when there's a borrow, and 1 when there is not.
+
+                        self.registers[register_x as usize] = difference;
+                        self.pc += 2;
+                    }
+                    // Stores the most significant bit of Vx in Vf and shits Vx to the left by 1.
+                    0x00E => {
+                        let register_x = opcode & 0x0F00;
+                        self.registers[15] = self.registers[register_x as usize] & 0b10000000;
+                        self.registers[register_x as usize] =
+                            self.registers[register_x as usize] << 1;
+                        self.pc += 2;
+                    }
                 }
             }
+            // Skip the next instruction if Vx does not equal Vy.
+            0x9000 => {
+                let register_x = opcode & 0x0F00;
+                let register_y = opcode & 0x00F0;
+                if self.registers[register_x as usize] != self.registers[register_y as usize] {
+                    self.pc += 2;
+                }
+                self.pc += 2;
+            }
+            // Sets I to the address NNN.
+            0xA000 => {
+                let address = opcode & 0x0FFF;
+                self.I = address;
+                self.pc += 2;
+            }
+            // Jumps to the address NNN plus V0.
+            0xB000 => {
+                let address = opcode & 0x0FFF;
+                self.pc = (self.registers[0] + address) as usize;
+            }
+            // Sets Vx to the result of a bitwise and operation on a random number (0-255).
+            0xC000 => {
+                let value = opcode & 0x00FF;
+                let register_x = opcode & 0x0F00;
+                self.registers[register_x as usize] = (rand::random::<u8>() & value as u8) as u16;
+                self.pc += 2;
+            }
+            0xE000 => match opcode & 0x00FF {
+                0x009E => {
+                    let register_x = opcode & 0x0F00;
+                    if self.keys[self.registers[register_x as usize] as usize] == 1 {
+                        self.pc += 2;
+                    }
+                    self.pc += 2;
+                }
+                0x00A1 => {
+                    let register_x = opcode & 0x0F00;
+                    if self.keys[self.registers[register_x as usize] as usize] == 0 {
+                        self.pc += 2;
+                    }
+                    self.pc += 2;
+                }
+            },
+            0xF000 => match opcode & 0x00FF {
+                0x0007 => {
+                    let register_x = opcode & 0x0F00;
+                    self.registers[register_x as usize] = self.delay_timer;
+                    self.pc += 2;
+                }
+                0x000A => {
+                    let register_x = opcode & 0x0F00;
+                    for item in self.keys.iter().enumerate() {
+                        let (idx, value): (usize, &u8) = item;
+                        if *value == 1 {
+                            self.registers[register_x as usize] = idx as u16;
+                            self.pc += 2;
+                        }
+                    }
+                }
+                0x0015 => {
+                    let register_x = opcode & 0x0F00;
+                    self.delay_timer = self.registers[register_x as usize];
+                    self.pc += 2;
+                }
+                0x0018 => {
+                    let register_x = opcode & 0x0F00;
+                    self.sound_timer = self.registers[register_x as usize];
+                    self.pc += 2;
+                }
+                0x001E => {
+                    let register_x = opcode & 0x0F00;
+                    self.I += self.registers[register_x as usize];
+                    self.pc += 2;
+                }
+            },
 
             _ => println!("No Match"),
         }
