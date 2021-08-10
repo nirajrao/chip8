@@ -1,0 +1,10 @@
+name: Test CHIP-8 Emulator
+on: [push]
+jobs:
+  run-cargo-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Git repository
+        uses: actions/checkout@v2
+      - name: Build docker image
+        run: docker build . -t chip8
