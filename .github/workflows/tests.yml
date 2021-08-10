@@ -1,4 +1,4 @@
-name: Test CHIP-8 Emulator
+name: CHIP-8 Emulator Tests
 on: [push]
 jobs:
   run-cargo-tests:
