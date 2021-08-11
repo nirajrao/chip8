@@ -13,7 +13,7 @@ impl Opcode {
     }
 
     pub fn fetch_lowest_byte(&self) -> u8 {
-        (self.value & 0x0FF).to_be_bytes()[1]
+        (self.value & 0x00FF).to_be_bytes()[1]
     }
 
     pub fn fetch_nnn(&self) -> u16 {
@@ -23,12 +23,12 @@ impl Opcode {
 
     pub fn fetch_x(&self) -> usize {
         // X - 4 lowest bits of high byte of instruction.
-        usize::from(self.value & 0x0F00)
+        usize::from((self.value & 0x0F00).to_be_bytes()[0])
     }
 
     pub fn fetch_y(&self) -> usize {
         // Y - 4 highest bits of low byte of instruction.
-        usize::from(self.value & 0x00F0)
+        usize::from((self.value & 0x00F0).to_be_bytes()[1] >> 4)
     }
 }
 
@@ -68,13 +68,13 @@ mod tests {
     fn test_fetch_x() {
         let opcode = Opcode { value: 0x1234 };
         let lowest_nibble = opcode.fetch_x();
-        assert_eq!(lowest_nibble, 0x0200);
+        assert_eq!(lowest_nibble, 0x2);
     }
 
     #[test]
     fn test_fetch_y() {
         let opcode = Opcode { value: 0x1234 };
         let lowest_nibble = opcode.fetch_y();
-        assert_eq!(lowest_nibble, 0x0030);
+        assert_eq!(lowest_nibble, 0x3);
     }
 }
