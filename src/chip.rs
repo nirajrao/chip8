@@ -279,22 +279,18 @@ impl Chip8 {
     }
 
     fn register_dump(&mut self, opcode: &Opcode) {
-        let mut offset = 0;
         let x = opcode.fetch_x();
         for idx in 0..=x {
             let value = self.v[idx as usize];
-            self.memory_buffer[(self.i + offset) as usize] = value;
-            offset += 1;
+            self.memory_buffer[self.i as usize + idx] = value;
         }
         self.pc += 2;
     }
 
     fn register_load(&mut self, opcode: &Opcode) {
         let x = opcode.fetch_x();
-        let mut offset = 0;
         for idx in 0..=x {
-            self.v[idx as usize] = self.memory_buffer[(self.i + offset) as usize];
-            offset += 1;
+            self.v[idx as usize] = self.memory_buffer[self.i as usize + idx];
         }
         self.pc += 2;
     }
@@ -693,5 +689,137 @@ mod tests {
         chip8.decode_opcode(0xB230);
 
         assert_eq!(chip8.pc, 0x0235);
+    }
+
+    #[test]
+    fn test_skip_next_instruction_if_vx_key_is_pressed() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.keys[0] = 1;
+
+        chip8.v[0] = 0;
+
+        chip8.decode_opcode(0xE09E);
+
+        assert_eq!(chip8.pc, 0x200 + 4);
+
+        chip8.keys[1] = 0;
+
+        chip8.v[1] = 1;
+
+        chip8.decode_opcode(0xE19E);
+
+        assert_eq!(chip8.pc, 0x204 + 2);
+    }
+
+    #[test]
+    fn test_skip_next_instruction_if_vx_key_is_not_pressed() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.keys[0] = 1;
+
+        chip8.v[0] = 0;
+
+        chip8.decode_opcode(0xE0A1);
+
+        assert_eq!(chip8.pc, 0x200 + 2);
+
+        chip8.keys[1] = 0;
+
+        chip8.v[1] = 1;
+
+        chip8.decode_opcode(0xE1A1);
+
+        assert_eq!(chip8.pc, 0x202 + 4);
+    }
+
+    #[test]
+    fn test_set_vx_to_delay_timer_value() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.delay_timer = 15;
+
+        chip8.decode_opcode(0xF007);
+
+        assert_eq!(chip8.v[0], 15);
+    }
+
+    #[test]
+    fn test_await_key_press_and_store_in_vx() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.decode_opcode(0xF00A);
+
+        assert_eq!(chip8.pc, 0x200);
+
+        chip8.keys[1] = 1;
+
+        chip8.decode_opcode(0xF00A);
+
+        assert_eq!(chip8.pc, 0x202);
+        assert_eq!(chip8.v[0], 1);
+    }
+
+    #[test]
+    fn test_set_delay_timer_to_vx() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.v[0] = 12;
+
+        chip8.decode_opcode(0xF015);
+
+        assert_eq!(chip8.delay_timer, 12);
+    }
+
+    #[test]
+    fn test_set_sound_timer_to_vx() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.v[0] = 12;
+
+        chip8.decode_opcode(0xF018);
+
+        assert_eq!(chip8.sound_timer, 12);
+    }
+
+    #[test]
+    fn test_add_vx_to_i() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.v[0] = 12;
+
+        chip8.decode_opcode(0xF01E);
+
+        assert_eq!(chip8.i, 12);
+    }
+
+    #[test]
+    fn test_register_dump() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        for i in 0..10 {
+            chip8.v[i] = i as u8;
+        }
+
+        chip8.decode_opcode(0xFA55);
+
+        for i in 0..10 {
+            assert_eq!(chip8.memory_buffer[chip8.i as usize + i], i as u8);
+        }
+    }
+
+    #[test]
+    fn test_register_load() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        for i in 0..10 {
+            chip8.memory_buffer[chip8.i as usize + i] = i as u8;
+        }
+
+        chip8.decode_opcode(0xFA65);
+
+        for i in 0..10 {
+            assert_eq!(chip8.v[i], i as u8);
+        }
     }
 }
