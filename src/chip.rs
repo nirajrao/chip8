@@ -185,9 +185,20 @@ impl Chip8 {
         let register_x_identifier = opcode.fetch_x();
         let register_y_identifier = opcode.fetch_y();
 
-        let difference = self.v[register_y_identifier] - self.v[register_x_identifier];
+        let mut mask = 0x1;
+        let mut borrow = false;
+        while mask < 0x80 {
+            if self.v[register_x_identifier] & mask > self.v[register_y_identifier] & mask {
+                self.v[15] = 0;
+                borrow = true;
+            }
+            mask <<= 1;
+        }
+        if !borrow {
+            self.v[15] = 1;
+        }
 
-        // TODO: VF is set to 0 when there's a borrow, and 1 when there is not.
+        let difference = self.v[register_y_identifier] - self.v[register_x_identifier];
 
         self.v[register_x_identifier] = difference;
         self.pc += 2;
@@ -632,6 +643,15 @@ mod tests {
 
         chip8.decode_opcode(0x8237);
         assert_eq!(chip8.v[2], 5);
+        assert_eq!(chip8.v[15], 0);
+        assert_eq!(chip8.pc, 0x200 + 2);
+
+        chip8.v[2] = 4;
+        chip8.v[3] = 12;
+        chip8.decode_opcode(0x8237);
+        assert_eq!(chip8.v[2], 8);
+        assert_eq!(chip8.v[15], 1);
+        assert_eq!(chip8.pc, 0x202 + 2);
     }
 
     #[test]
