@@ -444,15 +444,11 @@ mod tests {
     #[test]
     fn test_jump_to_nnn() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let first_opcode = Opcode { value: 0x1234 };
-        let second_opcode = Opcode { value: 0x1111 };
 
-        // Even though `jump_to_nnn` takes a mutable **reference** to a Chip8 instance, Rust knows
-        // how to automatically reference the instance.
-        chip8.jump_to_nnn(&first_opcode);
+        chip8.decode_opcode(0x1234);
         assert_eq!(chip8.pc, 0x0234);
 
-        chip8.jump_to_nnn(&second_opcode);
+        chip8.decode_opcode(0x1111);
         assert_eq!(chip8.pc, 0x0111);
     }
 
@@ -460,34 +456,30 @@ mod tests {
     #[should_panic]
     fn test_call_subroutine_at_nnn() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
 
-        chip8.call_subroutine_at_nnn(&opcode);
+        chip8.decode_opcode(0x2234);
         assert_eq!(chip8.stack[0], 0x200);
         assert_eq!(chip8.sp, 1);
         assert_eq!(chip8.pc, 0x0234);
 
         for i in 1..16 {
-            let opcode = Opcode { value: i };
-            chip8.call_subroutine_at_nnn(&opcode);
+            chip8.decode_opcode(0x2000 + i);
             assert_eq!(chip8.sp, (i + 1) as usize);
         }
         // We are out of stack space, and the rust kernel should panic.
-        chip8.call_subroutine_at_nnn(&opcode);
+        chip8.decode_opcode(0x2123);
     }
 
     #[test]
     fn test_skips_next_instruction_if_vx_equals_nn() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         let register_x_identifier = 0x2;
 
         chip8.v[register_x_identifier] = 0x0034;
-        chip8.skip_next_instruction_if_vx_equals_nn(&opcode);
+        chip8.decode_opcode(0x3234);
         assert_eq!(chip8.pc, 0x200 + 4);
 
-        let second_opcode = Opcode { value: 0x4567 };
-        chip8.skip_next_instruction_if_vx_equals_nn(&second_opcode);
+        chip8.decode_opcode(0x3212);
         // This instruction should not be skipped, since Vx is not equivalent to nn.
         assert_eq!(chip8.pc, 0x200 + 6);
     }
@@ -495,43 +487,38 @@ mod tests {
     #[test]
     fn test_skips_next_instruction_if_vx_not_equals_nn() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         let register_x_identifier = 0x2;
 
         chip8.v[register_x_identifier] = 0x0034;
-        chip8.skip_next_instruction_if_vx_not_equals_nn(&opcode);
+        chip8.decode_opcode(0x4234);
         // This instruction should not be skipped, since Vx is equivalent to nn.
         assert_eq!(chip8.pc, 0x200 + 2);
 
-        let second_opcode = Opcode { value: 0x4567 };
-        chip8.skip_next_instruction_if_vx_not_equals_nn(&second_opcode);
+        chip8.decode_opcode(0x4214);
         assert_eq!(chip8.pc, 0x200 + 6);
     }
 
     #[test]
     fn test_skips_next_instruction_if_vx_equals_vy() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         let register_x_identifier = 0x2;
         let register_y_identifier = 0x3;
         let value = 0x0034;
 
         chip8.v[register_x_identifier] = value;
         chip8.v[register_y_identifier] = value;
-        chip8.skip_next_instruction_if_vx_equals_vy(&opcode);
-        // This instruction should not be skipped, since Vx is equivalent to nn.
+        chip8.decode_opcode(0x5230);
+        // This instruction should be skipped, since Vx is equivalent to Vy.
         assert_eq!(chip8.pc, 0x200 + 4);
 
-        let second_opcode = Opcode { value: 0x4267 };
-        chip8.skip_next_instruction_if_vx_equals_vy(&second_opcode);
+        chip8.decode_opcode(0x5260);
         assert_eq!(chip8.pc, 0x200 + 6);
     }
 
     #[test]
     fn test_set_vx_to_nn() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
-        chip8.set_vx_to_nn(&opcode);
+        chip8.decode_opcode(0x6234);
 
         assert_eq!(chip8.v[2], 0x0034);
         assert_eq!(chip8.pc, 0x200 + 2);
@@ -540,9 +527,8 @@ mod tests {
     #[test]
     fn test_add_nn_to_vx() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         chip8.v[2] = 100;
-        chip8.add_nn_to_vx(&opcode);
+        chip8.decode_opcode(0x7234);
 
         assert_eq!(chip8.v[2], 100 + 0x0034);
         assert_eq!(chip8.pc, 0x200 + 2);
@@ -551,10 +537,9 @@ mod tests {
     #[test]
     fn test_set_vx_to_vy() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         chip8.v[2] = 100;
         chip8.v[3] = 200;
-        chip8.set_vx_to_vy(&opcode);
+        chip8.decode_opcode(0x8230);
 
         assert_eq!(chip8.v[2], 200);
         assert_eq!(chip8.pc, 0x200 + 2);
@@ -563,10 +548,9 @@ mod tests {
     #[test]
     fn test_set_vx_to_vx_or_vy() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         chip8.v[2] = 100;
         chip8.v[3] = 200;
-        chip8.set_vx_to_vx_or_vy(&opcode);
+        chip8.decode_opcode(0x8231);
 
         assert_eq!(chip8.v[2], 100 | 200);
         assert_eq!(chip8.pc, 0x200 + 2);
@@ -575,10 +559,9 @@ mod tests {
     #[test]
     fn test_set_vx_to_vx_and_vy() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         chip8.v[2] = 100;
         chip8.v[3] = 200;
-        chip8.set_vx_to_vx_and_vy(&opcode);
+        chip8.decode_opcode(0x8232);
 
         assert_eq!(chip8.v[2], 100 & 200);
         assert_eq!(chip8.pc, 0x200 + 2);
@@ -587,10 +570,9 @@ mod tests {
     #[test]
     fn test_set_vx_to_vx_xor_vy() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         chip8.v[2] = 100;
         chip8.v[3] = 200;
-        chip8.set_vx_to_vx_xor_vy(&opcode);
+        chip8.decode_opcode(0x8233);
 
         assert_eq!(chip8.v[2], 100 ^ 200);
         assert_eq!(chip8.pc, 0x200 + 2);
@@ -599,17 +581,16 @@ mod tests {
     #[test]
     fn test_add_vy_to_vx() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         chip8.v[2] = 50;
         chip8.v[3] = 60;
-        chip8.add_vy_to_vx(&opcode);
+        chip8.decode_opcode(0x8234);
 
         assert_eq!(chip8.v[2], 110);
         assert_eq!(chip8.pc, 0x200 + 2);
 
         chip8.v[3] = 200;
         // Should overflow since value will be 110 + 200 >= 256.
-        chip8.add_vy_to_vx(&opcode);
+        chip8.decode_opcode(0x8234);
 
         assert_eq!(chip8.v[15], 1);
         // Two's complement overflow.
@@ -619,20 +600,98 @@ mod tests {
     #[test]
     fn test_subtract_vy_from_vx() {
         let mut chip8 = Chip8::new("roms/pong.ch8");
-        let opcode = Opcode { value: 0x1234 };
         chip8.v[2] = 3;
         chip8.v[3] = 1;
-        chip8.subtract_vy_from_vx(&opcode);
+        chip8.decode_opcode(0x8235);
 
         assert_eq!(chip8.v[2], 2);
         assert_eq!(chip8.v[15], 1);
         assert_eq!(chip8.pc, 0x200 + 2);
 
         chip8.v[2] = 4;
-        chip8.v[3] = 2;
-        chip8.subtract_vy_from_vx(&opcode);
 
+        chip8.decode_opcode(0x8235);
         // There should be a borrow now.
         assert_eq!(chip8.v[15], 0);
+    }
+
+    #[test]
+    fn test_least_significant_vx_bit_in_vf() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+        chip8.v[2] = 3;
+
+        chip8.decode_opcode(0x8236);
+
+        assert_eq!(chip8.v[15], 1);
+        // 3 >> 1 == 1
+        assert_eq!(chip8.v[2], 1);
+    }
+
+    #[test]
+    fn test_set_vx_to_vy_minus_vx() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.v[2] = 4;
+        chip8.v[3] = 9;
+
+        chip8.decode_opcode(0x8237);
+        assert_eq!(chip8.v[2], 5);
+    }
+
+    #[test]
+    fn test_store_most_significant_vx_bit_in_vf() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.v[2] = 255;
+
+        chip8.decode_opcode(0x823E);
+
+        assert_eq!(chip8.v[15], 128);
+        assert_eq!(chip8.v[2], 254);
+    }
+
+    #[test]
+    fn test_skip_next_instruction_if_vx_not_equals_vy() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.v[2] = 20;
+        chip8.v[3] = 20;
+
+        chip8.decode_opcode(0x9230);
+
+        assert_eq!(chip8.pc, 514);
+
+        chip8.v[2] = 20;
+        chip8.v[3] = 30;
+
+        chip8.decode_opcode(0x9230);
+
+        assert_eq!(chip8.pc, 518);
+    }
+
+    #[test]
+    fn test_set_i_to_nnn() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.decode_opcode(0xA230);
+
+        assert_eq!(chip8.i, 0x0230);
+    }
+
+    #[test]
+    fn test_jump_to_nnn_plus_v0() {
+        let mut chip8 = Chip8::new("roms/pong.ch8");
+
+        chip8.v[0] = 0;
+
+        chip8.decode_opcode(0xB230);
+
+        assert_eq!(chip8.pc, 0x0230);
+
+        chip8.v[0] = 5;
+
+        chip8.decode_opcode(0xB230);
+
+        assert_eq!(chip8.pc, 0x0235);
     }
 }
