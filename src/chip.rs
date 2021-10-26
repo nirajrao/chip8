@@ -7,6 +7,25 @@ const STACK_LEVELS: usize = 16;
 const NUM_REGISTERS: usize = 16;
 const NUM_KEYS: usize = 16;
 
+const FONT_SET: [u8; 80] = [
+	0xF0, 0x90, 0x90, 0x90, 0xF0,		// 0
+	0x20, 0x60, 0x20, 0x20, 0x70,		// 1
+	0xF0, 0x10, 0xF0, 0x80, 0xF0,		// 2
+	0xF0, 0x10, 0xF0, 0x10, 0xF0,		// 3
+	0x90, 0x90, 0xF0, 0x10, 0x10,		// 4
+	0xF0, 0x80, 0xF0, 0x10, 0xF0,		// 5
+	0xF0, 0x80, 0xF0, 0x90, 0xF0,		// 6
+	0xF0, 0x10, 0x20, 0x40, 0x40,		// 7
+	0xF0, 0x90, 0xF0, 0x90, 0xF0,		// 8
+	0xF0, 0x90, 0xF0, 0x10, 0xF0,		// 9
+	0xF0, 0x90, 0xF0, 0x90, 0x90,		// A
+	0xE0, 0x90, 0xE0, 0x90, 0xE0,		// B
+	0xF0, 0x80, 0x80, 0x80, 0xF0,		// C
+	0xE0, 0x90, 0x90, 0x90, 0xE0,		// D
+	0xF0, 0x80, 0xF0, 0x80, 0xF0,		// E
+	0xF0, 0x80, 0xF0, 0x80, 0x80		// F
+];
+
 #[derive(Debug)]
 pub struct Chip8 {
     memory_buffer: [u8; MEMORY_SIZE],
@@ -20,6 +39,7 @@ pub struct Chip8 {
     sound_timer: u8,
     graphics: [[u8; 64]; 32],
 }
+
 
 impl Chip8 {
     pub fn new(filename: &str) -> Self {
@@ -45,6 +65,10 @@ impl Chip8 {
         for item in contents.iter().enumerate() {
             let (idx, byte): (usize, &u8) = item;
             memory_buffer[idx + 512] = *byte;
+        }
+
+        for i in 0..80 {
+            memory_buffer[i] = FONT_SET[i];
         }
         memory_buffer
     }
@@ -102,7 +126,7 @@ impl Chip8 {
     fn add_nn_to_vx(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
         let value = opcode.fetch_lowest_byte();
-        self.v[register_x_identifier] += value;
+        self.v[register_x_identifier] = (self.v[register_x_identifier]).wrapping_add(value);
         self.pc += 2;
     }
 
@@ -141,14 +165,26 @@ impl Chip8 {
         let register_x_identifier = opcode.fetch_x();
         let register_y_identifier = opcode.fetch_y();
 
+        let mut mask = 0x1;
+        let mut carry = false;
+        while mask < 0x80 {
+            if self.v[register_y_identifier] & mask == 1 && self.v[register_x_identifier] & mask == 1 {
+                self.v[0xF] = 1;
+                carry = true;
+            }
+            mask <<= 1;
+        }
+        if !carry {
+            self.v[15] = 0;
+        }
+
         if self.v[register_y_identifier] > 0xFF - self.v[register_x_identifier] {
             self.v[15] = 1;
         } else {
             self.v[15] = 0;
         }
 
-        self.v[register_x_identifier] =
-            (Wrapping(self.v[register_x_identifier]) + Wrapping(self.v[register_y_identifier])).0;
+        self.v[register_x_identifier] = (self.v[register_x_identifier]).wrapping_add(self.v[register_y_identifier]);
         self.pc += 2;
     }
 
@@ -228,13 +264,41 @@ impl Chip8 {
 
     fn jump_to_nnn_plus_v0(&mut self, opcode: &Opcode) {
         let address = opcode.fetch_nnn();
-        self.pc = (self.v[0] as u16 + address) as usize;
+        self.pc = (self.v[0] as u16).wrapping_add(address) as usize;
     }
 
     fn set_vx_to_bitwise_and_with_rand(&mut self, opcode: &Opcode) {
         let value = opcode.fetch_lowest_byte();
         let register_x_identifier = opcode.fetch_x();
         self.v[register_x_identifier] = rand::random::<u8>() & value;
+        self.pc += 2;
+    }
+
+    fn draw_sprite_at_vx_vy(&mut self, opcode: &Opcode) {
+        let register_x_identifier = opcode.fetch_x();
+        let register_y_identifier = opcode.fetch_y();
+        let height = opcode.fetch_lowest_nibble();
+        let register_x_value = self.v[register_x_identifier];
+        let register_y_value = self.v[register_y_identifier];
+        self.v[0xF] = 0;
+
+        for height_offset in 0..height {
+            let sprite_row = self.memory_buffer[(self.i + height_offset) as usize];
+            // println!("In Function: {}", self.i + height_offset);
+
+            for width_offset in 0..8 {
+                let screen_pixel = self.graphics[(register_x_value + width_offset as u8) as usize][(register_y_value + height_offset as u8) as usize];
+                let sprite_bit = (sprite_row >> (7 - width_offset)) & 1;
+
+                // There is a collision, so set Vf.
+                if screen_pixel == 1 && sprite_bit == 1 {
+                    self.v[0xF] = 1;
+                }
+
+                self.graphics[(register_x_value + width_offset as u8) as usize][(register_y_value + height_offset as u8) as usize] ^= sprite_bit;
+            }
+        }
+
         self.pc += 2;
     }
 
@@ -285,7 +349,21 @@ impl Chip8 {
 
     fn add_vx_to_i(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
-        self.i += self.v[register_x_identifier] as u16;
+        self.i = (self.v[register_x_identifier] as u16).wrapping_add(self.i);
+        self.pc += 2;
+    }
+
+    fn set_i_to_sprite_location(&mut self, opcode: &Opcode) {
+        let register_x_identifier = opcode.fetch_x();
+        self.i = (self.v[register_x_identifier] as u16).wrapping_mul(5);
+    }
+
+    fn set_bcd_of_vx(&mut self, opcode: &Opcode) {
+        let register_x_identifier = opcode.fetch_x();
+        let register_x_value = self.v[register_x_identifier];
+        self.memory_buffer[self.i as usize] = register_x_value / 100;
+        self.memory_buffer[(self.i + 1) as usize] = (register_x_value / 10) % 10;
+        self.memory_buffer[(self.i + 2) as usize] = (register_x_value % 100) % 10;
         self.pc += 2;
     }
 
@@ -400,6 +478,9 @@ impl Chip8 {
             0xC000 => {
                 self.set_vx_to_bitwise_and_with_rand(&opcode);
             }
+            0xD000 => {
+                self.draw_sprite_at_vx_vy(&opcode);
+            }
             0xE000 => {
                 let lowest_byte = opcode.fetch_lowest_byte();
                 match lowest_byte {
@@ -430,6 +511,12 @@ impl Chip8 {
                     0x001E => {
                         self.add_vx_to_i(&opcode);
                     }
+                    0x0029 => {
+                        self.set_i_to_sprite_location(&opcode);
+                    }
+                    0x0033 => {
+                        self.set_bcd_of_vx(&opcode);
+                    }
                     0x0055 => {
                         self.register_dump(&opcode);
                     }
@@ -447,10 +534,11 @@ impl Chip8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const TEST_ROM: &str = "roms/pong.ch8";
 
     #[test]
     fn test_jump_to_nnn() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.decode_opcode(0x1234);
         assert_eq!(chip8.pc, 0x0234);
@@ -462,7 +550,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_call_subroutine_at_nnn() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.decode_opcode(0x2234);
         assert_eq!(chip8.stack[0], 0x200);
@@ -479,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_skips_next_instruction_if_vx_equals_nn() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         let register_x_identifier = 0x2;
 
         chip8.v[register_x_identifier] = 0x0034;
@@ -493,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_skips_next_instruction_if_vx_not_equals_nn() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         let register_x_identifier = 0x2;
 
         chip8.v[register_x_identifier] = 0x0034;
@@ -507,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_skips_next_instruction_if_vx_equals_vy() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         let register_x_identifier = 0x2;
         let register_y_identifier = 0x3;
         let value = 0x0034;
@@ -524,7 +612,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_nn() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         chip8.decode_opcode(0x6234);
 
         assert_eq!(chip8.v[2], 0x0034);
@@ -533,7 +621,7 @@ mod tests {
 
     #[test]
     fn test_add_nn_to_vx() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         chip8.v[2] = 100;
         chip8.decode_opcode(0x7234);
 
@@ -543,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vy() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         chip8.v[2] = 100;
         chip8.v[3] = 200;
         chip8.decode_opcode(0x8230);
@@ -554,7 +642,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vx_or_vy() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         chip8.v[2] = 100;
         chip8.v[3] = 200;
         chip8.decode_opcode(0x8231);
@@ -565,7 +653,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vx_and_vy() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         chip8.v[2] = 100;
         chip8.v[3] = 200;
         chip8.decode_opcode(0x8232);
@@ -576,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vx_xor_vy() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         chip8.v[2] = 100;
         chip8.v[3] = 200;
         chip8.decode_opcode(0x8233);
@@ -587,7 +675,7 @@ mod tests {
 
     #[test]
     fn test_add_vy_to_vx() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         chip8.v[2] = 50;
         chip8.v[3] = 60;
         chip8.decode_opcode(0x8234);
@@ -606,7 +694,7 @@ mod tests {
 
     #[test]
     fn test_subtract_vy_from_vx() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         chip8.v[2] = 3;
         chip8.v[3] = 1;
         chip8.decode_opcode(0x8235);
@@ -624,7 +712,7 @@ mod tests {
 
     #[test]
     fn test_least_significant_vx_bit_in_vf() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
         chip8.v[2] = 3;
 
         chip8.decode_opcode(0x8236);
@@ -636,7 +724,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vy_minus_vx() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.v[2] = 4;
         chip8.v[3] = 9;
@@ -656,7 +744,7 @@ mod tests {
 
     #[test]
     fn test_store_most_significant_vx_bit_in_vf() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.v[2] = 255;
 
@@ -668,7 +756,7 @@ mod tests {
 
     #[test]
     fn test_skip_next_instruction_if_vx_not_equals_vy() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.v[2] = 20;
         chip8.v[3] = 20;
@@ -687,7 +775,7 @@ mod tests {
 
     #[test]
     fn test_set_i_to_nnn() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.decode_opcode(0xA230);
 
@@ -696,7 +784,7 @@ mod tests {
 
     #[test]
     fn test_jump_to_nnn_plus_v0() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.v[0] = 0;
 
@@ -712,8 +800,35 @@ mod tests {
     }
 
     #[test]
+    fn test_draw_sprite_at_vx_vy() {
+        let mut chip8 = Chip8::new(TEST_ROM);
+
+        chip8.v[0] = 0;
+        chip8.v[1] = 0;
+        chip8.i = 0x500;
+
+        for width_offset in 0..8 {
+            chip8.memory_buffer[(chip8.i + width_offset) as usize] = ((width_offset) % 2) as u8;
+            // println!("Memory Buffer: {} -> {}", chip8.i + width_offset, width_offset % 2);
+        }
+
+        chip8.decode_opcode(0xD018);
+        for x_coord in 0..8 {
+            for y_coord in 0..8 {
+                if x_coord == 7 && y_coord % 2 == 1 {
+                    assert_eq!(chip8.graphics[x_coord][y_coord], 1);
+                } else {
+                    assert_eq!(chip8.graphics[x_coord][y_coord], 0);
+                }
+            }
+        }
+
+    }
+
+
+    #[test]
     fn test_skip_next_instruction_if_vx_key_is_pressed() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.keys[0] = 1;
 
@@ -734,7 +849,7 @@ mod tests {
 
     #[test]
     fn test_skip_next_instruction_if_vx_key_is_not_pressed() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.keys[0] = 1;
 
@@ -755,7 +870,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_delay_timer_value() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.delay_timer = 15;
 
@@ -766,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_await_key_press_and_store_in_vx() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.decode_opcode(0xF00A);
 
@@ -782,7 +897,7 @@ mod tests {
 
     #[test]
     fn test_set_delay_timer_to_vx() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.v[0] = 12;
 
@@ -793,7 +908,7 @@ mod tests {
 
     #[test]
     fn test_set_sound_timer_to_vx() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.v[0] = 12;
 
@@ -804,7 +919,7 @@ mod tests {
 
     #[test]
     fn test_add_vx_to_i() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         chip8.v[0] = 12;
 
@@ -814,8 +929,22 @@ mod tests {
     }
 
     #[test]
+    fn test_set_bcd_of_vx() {
+        let mut chip8 = Chip8::new(TEST_ROM);
+
+        chip8.v[0] = 243;
+
+        chip8.decode_opcode(0xF033);
+
+        assert_eq!(chip8.memory_buffer[chip8.i as usize], 2);
+        assert_eq!(chip8.memory_buffer[(chip8.i + 1) as usize], 4);
+        assert_eq!(chip8.memory_buffer[(chip8.i + 2) as usize], 3);
+        assert_eq!(chip8.pc, 514);
+    }
+
+    #[test]
     fn test_register_dump() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         for i in 0..10 {
             chip8.v[i] = i as u8;
@@ -830,7 +959,7 @@ mod tests {
 
     #[test]
     fn test_register_load() {
-        let mut chip8 = Chip8::new("roms/pong.ch8");
+        let mut chip8 = Chip8::new(TEST_ROM);
 
         for i in 0..10 {
             chip8.memory_buffer[chip8.i as usize + i] = i as u8;
