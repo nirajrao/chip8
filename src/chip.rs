@@ -284,7 +284,6 @@ impl Chip8 {
 
         for height_offset in 0..height {
             let sprite_row = self.memory_buffer[(self.i + height_offset) as usize];
-            // println!("In Function: {}", self.i + height_offset);
 
             for width_offset in 0..8 {
                 let screen_pixel = self.graphics[(register_x_value + width_offset as u8) as usize][(register_y_value + height_offset as u8) as usize];
@@ -809,7 +808,6 @@ mod tests {
 
         for width_offset in 0..8 {
             chip8.memory_buffer[(chip8.i + width_offset) as usize] = ((width_offset) % 2) as u8;
-            // println!("Memory Buffer: {} -> {}", chip8.i + width_offset, width_offset % 2);
         }
 
         chip8.decode_opcode(0xD018);
