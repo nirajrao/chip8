@@ -34,10 +34,10 @@ pub struct Chip8 {
     sp: usize, // Stack Pointer
     i: u16,    // Index Register
     v: [u8; NUM_REGISTERS],
-    keys: [u8; NUM_KEYS],
+    pub keys: [u8; NUM_KEYS],
     delay_timer: u8,
     sound_timer: u8,
-    graphics: [[u8; 64]; 32],
+    pub graphics: [[u8; 32]; 64],
 }
 
 
@@ -49,7 +49,7 @@ impl Chip8 {
             stack: [0; STACK_LEVELS],
             keys: [0; NUM_KEYS],
             v: [0; NUM_REGISTERS],
-            graphics: [[0; 64]; 32],
+            graphics: [[0; 32]; 64],
             pc: 0x200,
             sp: 0,
             i: 0,
@@ -73,8 +73,23 @@ impl Chip8 {
         memory_buffer
     }
 
+    pub fn emulate_cycle(&mut self) {
+        let opcode = self.fetch_opcode();
+        self.decode_opcode(opcode);
+    }
+
     fn fetch_opcode(&self) -> u16 {
         (self.memory_buffer[self.pc] as u16) << 8 | self.memory_buffer[self.pc + 1] as u16
+    }
+
+    fn clear_screen(&mut self, opcode: &Opcode) {
+        self.graphics = [[0; 32]; 64];
+        self.pc += 2;
+    }
+
+    fn return_from_subroutine(&mut self, opcode: &Opcode) {
+        self.pc = self.stack[self.sp] as usize;
+        self.sp -= 1;
     }
 
     fn jump_to_nnn(&mut self, opcode: &Opcode) {
@@ -119,6 +134,7 @@ impl Chip8 {
     fn set_vx_to_nn(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
         let value = opcode.fetch_lowest_byte();
+        println!("Set vx to nn: {}", value);
         self.v[register_x_identifier] = value;
         self.pc += 2;
     }
@@ -234,7 +250,7 @@ impl Chip8 {
             self.v[15] = 1;
         }
 
-        let difference = self.v[register_y_identifier] - self.v[register_x_identifier];
+        let difference = self.v[register_y_identifier].wrapping_sub(self.v[register_x_identifier]);
 
         self.v[register_x_identifier] = difference;
         self.pc += 2;
@@ -355,6 +371,7 @@ impl Chip8 {
     fn set_i_to_sprite_location(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
         self.i = (self.v[register_x_identifier] as u16).wrapping_mul(5);
+        self.pc += 2;
     }
 
     fn set_bcd_of_vx(&mut self, opcode: &Opcode) {
@@ -384,11 +401,24 @@ impl Chip8 {
     }
 
     fn decode_opcode(&mut self, opcode: u16) {
+        println!("Hi: {:X}", opcode);
         let opcode = Opcode { value: opcode };
         let highest_nibble = opcode.fetch_highest_nibble();
 
         match highest_nibble {
             // 1NNN - Jumps to address NNN.
+            0x0000 => {
+                let lowest_byte = opcode.fetch_lowest_byte();
+                match lowest_byte {
+                    0x00E0 => {
+                        self.clear_screen(&opcode);
+                    }
+                    0x00EE => {
+                        self.return_from_subroutine(&opcode);
+                    }
+                    _ => println!("No Match"),
+                }
+            }
             0x1000 => {
                 self.jump_to_nnn(&opcode);
             }
