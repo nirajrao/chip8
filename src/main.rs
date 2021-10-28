@@ -1,6 +1,8 @@
 mod chip;
 mod opcode;
-use sdl2;
+mod keypad;
+use sdl2::keyboard::Keycode;
+use keypad::Keypad;
 use std::time::Duration;
 
 const SCREEN_WIDTH: usize = 640;
@@ -19,7 +21,9 @@ fn main() {
 
     let mut event_pump = sdl.event_pump().unwrap();
 
-    let mut chip8 = chip::Chip8::new("roms/bc_test.ch8");
+    let mut chip8 = chip::Chip8::new("roms/random_number_test.ch8");
+
+    let keypad = Keypad::new();
 
     'running: loop {
         for event in event_pump.poll_iter() {
@@ -30,6 +34,15 @@ fn main() {
                     ..
                 } => break 'running,
                 _ => {}
+            }
+        }
+
+        let keys: Vec<Keycode> = event_pump.keyboard_state().pressed_scancodes().filter_map(Keycode::from_scancode).collect();
+
+        for key in keys {
+            if keypad.contains_key(&key) {
+                let index = keypad[&key];
+                chip8.keys[index as usize] = 1;
             }
         }
 
@@ -44,7 +57,7 @@ fn main() {
         }
 
         canvas.present();
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 30));
-        // The rest of the game loop goes here...
+        chip8.keys = [0; 16];
+        // ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 30));
     }
 }

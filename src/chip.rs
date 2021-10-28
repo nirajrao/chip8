@@ -1,6 +1,5 @@
 use crate::opcode::Opcode;
 use std::fs;
-use std::num::Wrapping;
 
 const MEMORY_SIZE: usize = 4096;
 const STACK_LEVELS: usize = 16;
@@ -76,6 +75,14 @@ impl Chip8 {
     pub fn emulate_cycle(&mut self) {
         let opcode = self.fetch_opcode();
         self.decode_opcode(opcode);
+
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+
+        if self.sound_timer > 0 {
+            self.sound_timer -= 1;
+        }
     }
 
     fn fetch_opcode(&self) -> u16 {
@@ -256,8 +263,8 @@ impl Chip8 {
         let register_x_identifier = opcode.fetch_x();
         let register_y_identifier = opcode.fetch_y();
         let height = opcode.fetch_lowest_nibble();
-        let register_x_value = self.v[register_x_identifier];
-        let register_y_value = self.v[register_y_identifier];
+        let register_x_value = self.v[register_x_identifier] % 64;
+        let register_y_value = self.v[register_y_identifier] % 32;
         self.v[0xF] = 0;
 
         for height_offset in 0..height {
@@ -267,6 +274,11 @@ impl Chip8 {
                 if register_x_value + width_offset >= 64 {
                     continue
                 }
+
+                if register_y_value + height_offset as u8 >= 32 {
+                    continue
+                }
+
                 let screen_pixel = self.graphics[(register_x_value + width_offset as u8) as usize][(register_y_value + height_offset as u8) as usize];
                 let sprite_bit = (sprite_row >> (7 - width_offset)) & 0x1;
 
