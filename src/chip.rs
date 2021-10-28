@@ -82,13 +82,13 @@ impl Chip8 {
         (self.memory_buffer[self.pc] as u16) << 8 | self.memory_buffer[self.pc + 1] as u16
     }
 
-    fn clear_screen(&mut self, opcode: &Opcode) {
+    fn clear_screen(&mut self, _opcode: &Opcode) {
         self.graphics = [[0; 32]; 64];
         self.pc += 2;
     }
 
-    fn return_from_subroutine(&mut self, opcode: &Opcode) {
-        self.pc = self.stack[self.sp] as usize;
+    fn return_from_subroutine(&mut self, _opcode: &Opcode) {
+        self.pc = self.stack[self.sp - 1] as usize;
         self.sp -= 1;
     }
 
@@ -98,6 +98,7 @@ impl Chip8 {
     }
 
     fn call_subroutine_at_nnn(&mut self, opcode: &Opcode) {
+        self.pc += 2;
         let address = opcode.fetch_nnn();
         self.stack[self.sp] = self.pc as u16;
         self.sp += 1;
@@ -134,7 +135,6 @@ impl Chip8 {
     fn set_vx_to_nn(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
         let value = opcode.fetch_lowest_byte();
-        println!("Set vx to nn: {}", value);
         self.v[register_x_identifier] = value;
         self.pc += 2;
     }
@@ -181,26 +181,10 @@ impl Chip8 {
         let register_x_identifier = opcode.fetch_x();
         let register_y_identifier = opcode.fetch_y();
 
-        let mut mask = 0x1;
-        let mut carry = false;
-        while mask < 0x80 {
-            if self.v[register_y_identifier] & mask == 1 && self.v[register_x_identifier] & mask == 1 {
-                self.v[0xF] = 1;
-                carry = true;
-            }
-            mask <<= 1;
-        }
-        if !carry {
-            self.v[15] = 0;
-        }
+        let (addition, overflow) = (self.v[register_x_identifier]).overflowing_add(self.v[register_y_identifier]);
+        self.v[0xF] = if overflow {1} else {0};
 
-        if self.v[register_y_identifier] > 0xFF - self.v[register_x_identifier] {
-            self.v[15] = 1;
-        } else {
-            self.v[15] = 0;
-        }
-
-        self.v[register_x_identifier] = (self.v[register_x_identifier]).wrapping_add(self.v[register_y_identifier]);
+        self.v[register_x_identifier] = addition;
         self.pc += 2;
     }
 
@@ -208,28 +192,18 @@ impl Chip8 {
         let register_x_identifier = opcode.fetch_x();
         let register_y_identifier = opcode.fetch_y();
 
-        let mut mask = 0x1;
-        let mut borrow = false;
-        while mask < 0x80 {
-            if self.v[register_y_identifier] & mask > self.v[register_x_identifier] & mask {
-                self.v[15] = 0;
-                borrow = true;
-            }
-            mask <<= 1;
-        }
-        if !borrow {
-            self.v[15] = 1;
-        }
+        let (difference, overflow) = (self.v[register_x_identifier]).overflowing_sub(self.v[register_y_identifier]);
 
-        self.v[register_x_identifier] =
-            (Wrapping(self.v[register_x_identifier]) - Wrapping(self.v[register_y_identifier])).0;
+        self.v[0xF] = if !overflow {1} else {0};
+        self.v[register_x_identifier] = difference;
+
         self.pc += 2;
     }
 
     fn store_least_significant_vx_bit_in_vf(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
-        self.v[15] = self.v[register_x_identifier] & 0b00000001;
-        self.v[register_x_identifier] = self.v[register_x_identifier] >> 1;
+        self.v[0xF] = self.v[register_x_identifier] & 0x1;
+        self.v[register_x_identifier] >>= 1;
         self.pc += 2;
     }
 
@@ -237,29 +211,17 @@ impl Chip8 {
         let register_x_identifier = opcode.fetch_x();
         let register_y_identifier = opcode.fetch_y();
 
-        let mut mask = 0x1;
-        let mut borrow = false;
-        while mask < 0x80 {
-            if self.v[register_x_identifier] & mask > self.v[register_y_identifier] & mask {
-                self.v[15] = 0;
-                borrow = true;
-            }
-            mask <<= 1;
-        }
-        if !borrow {
-            self.v[15] = 1;
-        }
+        let (difference, overflow) = self.v[register_y_identifier].overflowing_sub(self.v[register_x_identifier]);
 
-        let difference = self.v[register_y_identifier].wrapping_sub(self.v[register_x_identifier]);
-
+        self.v[0xF] = if !overflow {1} else {0};
         self.v[register_x_identifier] = difference;
         self.pc += 2;
     }
 
     fn store_most_significant_vx_bit_in_vf(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
-        self.v[15] = self.v[register_x_identifier] & 0b10000000;
-        self.v[register_x_identifier] = self.v[register_x_identifier] << 1;
+        self.v[0xF] = self.v[register_x_identifier] >> 7 & 0x1;
+        self.v[register_x_identifier] <<=  1;
         self.pc += 2;
     }
 
@@ -302,8 +264,11 @@ impl Chip8 {
             let sprite_row = self.memory_buffer[(self.i + height_offset) as usize];
 
             for width_offset in 0..8 {
+                if register_x_value + width_offset >= 64 {
+                    continue
+                }
                 let screen_pixel = self.graphics[(register_x_value + width_offset as u8) as usize][(register_y_value + height_offset as u8) as usize];
-                let sprite_bit = (sprite_row >> (7 - width_offset)) & 1;
+                let sprite_bit = (sprite_row >> (7 - width_offset)) & 0x1;
 
                 // There is a collision, so set Vf.
                 if screen_pixel == 1 && sprite_bit == 1 {
@@ -401,12 +366,10 @@ impl Chip8 {
     }
 
     fn decode_opcode(&mut self, opcode: u16) {
-        println!("Hi: {:X}", opcode);
         let opcode = Opcode { value: opcode };
         let highest_nibble = opcode.fetch_highest_nibble();
 
         match highest_nibble {
-            // 1NNN - Jumps to address NNN.
             0x0000 => {
                 let lowest_byte = opcode.fetch_lowest_byte();
                 match lowest_byte {
@@ -419,6 +382,7 @@ impl Chip8 {
                     _ => println!("No Match"),
                 }
             }
+            // 1NNN - Jumps to address NNN.
             0x1000 => {
                 self.jump_to_nnn(&opcode);
             }
@@ -733,6 +697,7 @@ mod tests {
         assert_eq!(chip8.pc, 0x200 + 2);
 
         chip8.v[2] = 4;
+        chip8.v[3] = 5;
 
         chip8.decode_opcode(0x8235);
         // There should be a borrow now.
@@ -760,14 +725,14 @@ mod tests {
 
         chip8.decode_opcode(0x8237);
         assert_eq!(chip8.v[2], 5);
-        assert_eq!(chip8.v[15], 0);
+        assert_eq!(chip8.v[15], 1);
         assert_eq!(chip8.pc, 0x200 + 2);
 
-        chip8.v[2] = 4;
-        chip8.v[3] = 12;
+        chip8.v[2] = 12;
+        chip8.v[3] = 4;
         chip8.decode_opcode(0x8237);
-        assert_eq!(chip8.v[2], 8);
-        assert_eq!(chip8.v[15], 1);
+        assert_eq!(chip8.v[2], 248);
+        assert_eq!(chip8.v[15], 0);
         assert_eq!(chip8.pc, 0x202 + 2);
     }
 
@@ -779,7 +744,7 @@ mod tests {
 
         chip8.decode_opcode(0x823E);
 
-        assert_eq!(chip8.v[15], 128);
+        assert_eq!(chip8.v[0xF], 1);
         assert_eq!(chip8.v[2], 254);
     }
 
