@@ -1,4 +1,5 @@
 #[derive(Debug)]
+/// Helper struct to make data fetching easier in chip.rs.
 pub struct Opcode {
     pub value: u16,
 }

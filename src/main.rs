@@ -1,63 +1,57 @@
 mod chip;
 mod opcode;
 mod keypad;
+mod display;
+mod constants;
+
 use sdl2::keyboard::Keycode;
-use keypad::Keypad;
+use std::path::Path;
+use display::Display;
+use keypad::process_key_presses;
+use sdl2::event::Event;
 use std::time::Duration;
 
-const SCREEN_WIDTH: usize = 640;
-const SCREEN_HEIGHT: usize = 320;
+const ROM_PATH: &str = "./roms";
 
-fn main() {
-    let sdl = sdl2::init().unwrap();
-    let video_subsystem = sdl.video().unwrap();
-    let window = video_subsystem.window("Game", 900, 700).resizable().build().unwrap();
+pub fn main() -> Result<(), String> {
+    let filename = std::env::args().nth(1).expect("No ROM filename was passed in");
+    let path = Path::new(ROM_PATH).join(filename);
 
-    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string()).unwrap();
+    let mut chip8 = chip::Chip8::new(path);
 
-    canvas.set_draw_color(sdl2::pixels::Color::RGB(255, 255, 255));
-    canvas.clear();
-    canvas.present();
+    let mut display = Display::new();
 
-    let mut event_pump = sdl.event_pump().unwrap();
+    let mut event_pump = display.initialize_event_pump();
 
-    let mut chip8 = chip::Chip8::new("roms/random_number_test.ch8");
-
-    let keypad = Keypad::new();
+    display.present_canvas();
 
     'running: loop {
         for event in event_pump.poll_iter() {
             match event {
-                sdl2::event::Event::Quit { .. }
-                | sdl2::event::Event::KeyDown {
-                    keycode: Some(sdl2::keyboard::Keycode::Escape),
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
                 _ => {}
             }
         }
 
-        let keys: Vec<Keycode> = event_pump.keyboard_state().pressed_scancodes().filter_map(Keycode::from_scancode).collect();
+        let pressed_keys = event_pump
+            .keyboard_state()
+            .pressed_scancodes()
+            .filter_map(Keycode::from_scancode)
+            .collect();
 
-        for key in keys {
-            if keypad.contains_key(&key) {
-                let index = keypad[&key];
-                chip8.keys[index as usize] = 1;
-            }
-        }
+        let keys = process_key_presses(pressed_keys);
 
-        chip8.emulate_cycle();
-        for i in 0..64{
-            for j in 0..32{
-                if chip8.graphics[i][j] == 1 {
-                    let rect: sdl2::rect::Rect = sdl2::rect::Rect::new((i * 10) as i32, (j * 10) as i32, 10, 10);
-                    canvas.draw_rect(rect).unwrap();
-                }
-            }
-        }
+        chip8.emulate_cycle(keys);
 
-        canvas.present();
-        chip8.keys = [0; 16];
-        // ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 30));
+        display.update_canvas(&chip8);
+
+        display.present_canvas();
+        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 30));
     }
+
+    Ok(())
 }

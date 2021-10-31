@@ -1,10 +1,14 @@
-use crate::opcode::Opcode;
 use std::fs;
+use std::path::PathBuf;
+
+use crate::constants::{SCREEN_WIDTH, SCREEN_HEIGHT, NUM_KEYS};
+use crate::opcode::Opcode;
 
 const MEMORY_SIZE: usize = 4096;
+const INSTRUCTION_STARTING_POS: usize = 512;
 const STACK_LEVELS: usize = 16;
 const NUM_REGISTERS: usize = 16;
-const NUM_KEYS: usize = 16;
+const NUM_FONT_CHARS: usize = 80;
 
 const FONT_SET: [u8; 80] = [
 	0xF0, 0x90, 0x90, 0x90, 0xF0,		// 0
@@ -33,46 +37,33 @@ pub struct Chip8 {
     sp: usize, // Stack Pointer
     i: u16,    // Index Register
     v: [u8; NUM_REGISTERS],
-    pub keys: [u8; NUM_KEYS],
+    keys: Option<[u8; NUM_KEYS]>,
     delay_timer: u8,
     sound_timer: u8,
-    pub graphics: [[u8; 32]; 64],
+    pub graphics: [[u8; SCREEN_HEIGHT as usize]; SCREEN_WIDTH as usize],
 }
 
 
 impl Chip8 {
-    pub fn new(filename: &str) -> Self {
+    pub fn new(filename: PathBuf) -> Self {
         let memory_buffer = Chip8::load_file_into_memory(filename);
         Self {
-            memory_buffer: memory_buffer,
+            memory_buffer,
             stack: [0; STACK_LEVELS],
-            keys: [0; NUM_KEYS],
-            v: [0; NUM_REGISTERS],
-            graphics: [[0; 32]; 64],
             pc: 0x200,
             sp: 0,
             i: 0,
+            v: [0; NUM_REGISTERS],
+            keys: None,
             delay_timer: 0,
             sound_timer: 0,
+            graphics: [[0; SCREEN_HEIGHT as usize]; SCREEN_WIDTH as usize],
         }
     }
 
-    fn load_file_into_memory(filename: &str) -> [u8; MEMORY_SIZE] {
-        let mut memory_buffer: [u8; MEMORY_SIZE] = [0; MEMORY_SIZE];
-        let contents =
-            fs::read(filename).expect("Something went wrong when reading the CHIP-8 ROM");
-        for item in contents.iter().enumerate() {
-            let (idx, byte): (usize, &u8) = item;
-            memory_buffer[idx + 512] = *byte;
-        }
-
-        for i in 0..80 {
-            memory_buffer[i] = FONT_SET[i];
-        }
-        memory_buffer
-    }
-
-    pub fn emulate_cycle(&mut self) {
+    /// Main entrypoint into executing opcodes from a provided CHIP-8 ROM.
+    pub fn emulate_cycle(&mut self, keys: [u8; NUM_KEYS]) {
+        self.initialize_keys(keys);
         let opcode = self.fetch_opcode();
         self.decode_opcode(opcode);
 
@@ -83,14 +74,41 @@ impl Chip8 {
         if self.sound_timer > 0 {
             self.sound_timer -= 1;
         }
+
+        self.deinitialize_keys();
     }
+
+    fn load_file_into_memory(filename: PathBuf) -> [u8; MEMORY_SIZE] {
+        let mut memory_buffer: [u8; MEMORY_SIZE] = [0; MEMORY_SIZE];
+        println!("{:?}", filename);
+        let contents =
+            fs::read(filename).expect("Something went wrong when reading the CHIP-8 ROM");
+        for item in contents.iter().enumerate() {
+            let (idx, byte): (usize, &u8) = item;
+            memory_buffer[idx + INSTRUCTION_STARTING_POS] = *byte;
+        }
+
+        for i in 0..NUM_FONT_CHARS {
+            memory_buffer[i] = FONT_SET[i];
+        }
+        memory_buffer
+    }
+
+    fn initialize_keys(&mut self, keys: [u8; NUM_KEYS]) {
+        self.keys = Some(keys);
+    }
+
+    fn deinitialize_keys(&mut self) {
+        self.keys = None;
+    }
+
 
     fn fetch_opcode(&self) -> u16 {
         (self.memory_buffer[self.pc] as u16) << 8 | self.memory_buffer[self.pc + 1] as u16
     }
 
     fn clear_screen(&mut self, _opcode: &Opcode) {
-        self.graphics = [[0; 32]; 64];
+        self.graphics = [[0; SCREEN_HEIGHT as usize]; SCREEN_WIDTH as usize];
         self.pc += 2;
     }
 
@@ -263,19 +281,19 @@ impl Chip8 {
         let register_x_identifier = opcode.fetch_x();
         let register_y_identifier = opcode.fetch_y();
         let height = opcode.fetch_lowest_nibble();
-        let register_x_value = self.v[register_x_identifier] % 64;
-        let register_y_value = self.v[register_y_identifier] % 32;
+        let register_x_value = self.v[register_x_identifier] % SCREEN_WIDTH as u8;
+        let register_y_value = self.v[register_y_identifier] % SCREEN_HEIGHT as u8;
         self.v[0xF] = 0;
 
         for height_offset in 0..height {
             let sprite_row = self.memory_buffer[(self.i + height_offset) as usize];
 
             for width_offset in 0..8 {
-                if register_x_value + width_offset >= 64 {
+                if register_x_value + width_offset >= SCREEN_WIDTH as u8 {
                     continue
                 }
 
-                if register_y_value + height_offset as u8 >= 32 {
+                if register_y_value + height_offset as u8 >= SCREEN_HEIGHT as u8 {
                     continue
                 }
 
@@ -296,7 +314,10 @@ impl Chip8 {
 
     fn skip_next_instruction_if_vx_key_is_pressed(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
-        if self.keys[self.v[register_x_identifier] as usize] == 1 {
+
+        let keys = self.keys.expect("keys was not initialized");
+
+        if keys[self.v[register_x_identifier] as usize] == 1 {
             self.pc += 2;
         }
         self.pc += 2;
@@ -304,7 +325,8 @@ impl Chip8 {
 
     fn skip_next_instruction_if_vx_key_is_not_pressed(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
-        if self.keys[self.v[register_x_identifier] as usize] == 0 {
+        let keys = self.keys.expect("keys was not initialized");
+        if keys[self.v[register_x_identifier] as usize] == 0 {
             self.pc += 2;
         }
         self.pc += 2;
@@ -318,7 +340,8 @@ impl Chip8 {
 
     fn await_key_press_and_store_in_vx(&mut self, opcode: &Opcode) {
         let register_x_identifier = opcode.fetch_x();
-        for item in self.keys.iter().enumerate() {
+        let keys = self.keys.expect("keys was not initialized");
+        for item in keys.iter().enumerate() {
             let (idx, value): (usize, &u8) = item;
             if *value == 1 {
                 self.v[register_x_identifier] = idx as u8;
@@ -539,11 +562,17 @@ impl Chip8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const TEST_ROM: &str = "roms/pong.ch8";
+    use std::path::Path;
+
+    fn initialize_chip8() -> Chip8 {
+        let test_rom: PathBuf = Path::new("roms/pong.ch8").to_path_buf();
+        let chip8 = Chip8::new(test_rom);
+        chip8
+    }
 
     #[test]
     fn test_jump_to_nnn() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.decode_opcode(0x1234);
         assert_eq!(chip8.pc, 0x0234);
@@ -555,7 +584,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_call_subroutine_at_nnn() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.decode_opcode(0x2234);
         assert_eq!(chip8.stack[0], 0x200);
@@ -572,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_skips_next_instruction_if_vx_equals_nn() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         let register_x_identifier = 0x2;
 
         chip8.v[register_x_identifier] = 0x0034;
@@ -586,7 +615,7 @@ mod tests {
 
     #[test]
     fn test_skips_next_instruction_if_vx_not_equals_nn() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         let register_x_identifier = 0x2;
 
         chip8.v[register_x_identifier] = 0x0034;
@@ -600,7 +629,7 @@ mod tests {
 
     #[test]
     fn test_skips_next_instruction_if_vx_equals_vy() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         let register_x_identifier = 0x2;
         let register_y_identifier = 0x3;
         let value = 0x0034;
@@ -617,7 +646,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_nn() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         chip8.decode_opcode(0x6234);
 
         assert_eq!(chip8.v[2], 0x0034);
@@ -626,7 +655,7 @@ mod tests {
 
     #[test]
     fn test_add_nn_to_vx() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         chip8.v[2] = 100;
         chip8.decode_opcode(0x7234);
 
@@ -636,7 +665,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vy() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         chip8.v[2] = 100;
         chip8.v[3] = 200;
         chip8.decode_opcode(0x8230);
@@ -647,7 +676,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vx_or_vy() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         chip8.v[2] = 100;
         chip8.v[3] = 200;
         chip8.decode_opcode(0x8231);
@@ -658,7 +687,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vx_and_vy() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         chip8.v[2] = 100;
         chip8.v[3] = 200;
         chip8.decode_opcode(0x8232);
@@ -669,7 +698,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vx_xor_vy() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         chip8.v[2] = 100;
         chip8.v[3] = 200;
         chip8.decode_opcode(0x8233);
@@ -680,7 +709,7 @@ mod tests {
 
     #[test]
     fn test_add_vy_to_vx() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         chip8.v[2] = 50;
         chip8.v[3] = 60;
         chip8.decode_opcode(0x8234);
@@ -699,7 +728,7 @@ mod tests {
 
     #[test]
     fn test_subtract_vy_from_vx() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         chip8.v[2] = 3;
         chip8.v[3] = 1;
         chip8.decode_opcode(0x8235);
@@ -718,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_least_significant_vx_bit_in_vf() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
         chip8.v[2] = 3;
 
         chip8.decode_opcode(0x8236);
@@ -730,7 +759,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_vy_minus_vx() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.v[2] = 4;
         chip8.v[3] = 9;
@@ -750,7 +779,7 @@ mod tests {
 
     #[test]
     fn test_store_most_significant_vx_bit_in_vf() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.v[2] = 255;
 
@@ -762,7 +791,7 @@ mod tests {
 
     #[test]
     fn test_skip_next_instruction_if_vx_not_equals_vy() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.v[2] = 20;
         chip8.v[3] = 20;
@@ -781,7 +810,7 @@ mod tests {
 
     #[test]
     fn test_set_i_to_nnn() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.decode_opcode(0xA230);
 
@@ -790,7 +819,7 @@ mod tests {
 
     #[test]
     fn test_jump_to_nnn_plus_v0() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.v[0] = 0;
 
@@ -807,7 +836,7 @@ mod tests {
 
     #[test]
     fn test_draw_sprite_at_vx_vy() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.v[0] = 0;
         chip8.v[1] = 0;
@@ -833,9 +862,13 @@ mod tests {
 
     #[test]
     fn test_skip_next_instruction_if_vx_key_is_pressed() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
-        chip8.keys[0] = 1;
+        let mut keys = [0; NUM_KEYS];
+        keys[0] = 1;
+        keys[1] = 0;
+
+        chip8.initialize_keys(keys);
 
         chip8.v[0] = 0;
 
@@ -843,7 +876,6 @@ mod tests {
 
         assert_eq!(chip8.pc, 0x200 + 4);
 
-        chip8.keys[1] = 0;
 
         chip8.v[1] = 1;
 
@@ -854,9 +886,13 @@ mod tests {
 
     #[test]
     fn test_skip_next_instruction_if_vx_key_is_not_pressed() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
-        chip8.keys[0] = 1;
+        let mut keys = [0; NUM_KEYS];
+        keys[0] = 1;
+        keys[1] = 0;
+
+        chip8.initialize_keys(keys);
 
         chip8.v[0] = 0;
 
@@ -864,7 +900,6 @@ mod tests {
 
         assert_eq!(chip8.pc, 0x200 + 2);
 
-        chip8.keys[1] = 0;
 
         chip8.v[1] = 1;
 
@@ -875,7 +910,7 @@ mod tests {
 
     #[test]
     fn test_set_vx_to_delay_timer_value() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.delay_timer = 15;
 
@@ -886,13 +921,19 @@ mod tests {
 
     #[test]
     fn test_await_key_press_and_store_in_vx() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
+
+        let mut keys = [0; NUM_KEYS];
+
+        chip8.initialize_keys(keys);
 
         chip8.decode_opcode(0xF00A);
 
         assert_eq!(chip8.pc, 0x200);
 
-        chip8.keys[1] = 1;
+        keys[1] = 1;
+
+        chip8.initialize_keys(keys);
 
         chip8.decode_opcode(0xF00A);
 
@@ -902,7 +943,7 @@ mod tests {
 
     #[test]
     fn test_set_delay_timer_to_vx() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.v[0] = 12;
 
@@ -913,7 +954,7 @@ mod tests {
 
     #[test]
     fn test_set_sound_timer_to_vx() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.v[0] = 12;
 
@@ -924,7 +965,7 @@ mod tests {
 
     #[test]
     fn test_add_vx_to_i() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.v[0] = 12;
 
@@ -935,7 +976,7 @@ mod tests {
 
     #[test]
     fn test_set_bcd_of_vx() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         chip8.v[0] = 243;
 
@@ -949,7 +990,7 @@ mod tests {
 
     #[test]
     fn test_register_dump() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         for i in 0..10 {
             chip8.v[i] = i as u8;
@@ -964,7 +1005,7 @@ mod tests {
 
     #[test]
     fn test_register_load() {
-        let mut chip8 = Chip8::new(TEST_ROM);
+        let mut chip8 = initialize_chip8();
 
         for i in 0..10 {
             chip8.memory_buffer[chip8.i as usize + i] = i as u8;
